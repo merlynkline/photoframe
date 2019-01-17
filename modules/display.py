@@ -210,7 +210,7 @@ class display:
       '700',
       '-pointsize',
       '32',
-      'label:%s' % message,
+      'caption:%s' % message,
       '-extent',
       '%dx%d+%d+%d' % (self.width + self.xoffset, self.height + self.yoffset, self.xoffset, self.yoffset),
       '-depth',

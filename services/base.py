@@ -342,6 +342,8 @@ class BaseService:
       result['status'] = r.status_code
       if destination is None:
         result['content'] = r.content
+        if 'application/json' in r.headers['Content-Type']:
+          result['json'] = r.json()
       else:
         with open(destination, 'wb') as f:
           for chunk in r.iter_content(chunk_size=1024):

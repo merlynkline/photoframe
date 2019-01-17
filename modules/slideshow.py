@@ -147,7 +147,8 @@ class slideshow:
           # We need to expunge any pending image now
           # so we get fresh data to show the user
           if self.imageCurrent:
-            os.remove(self.imageCurrent)
+            if os.path.exists(self.imageCurrent):
+              os.remove(self.imageCurrent)
             self.imageCurrent = None
             imageOnScreen = False
             self.display.clear()

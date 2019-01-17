@@ -180,11 +180,18 @@ def show_logs(all, stack):
     title = 'Stacktrace of all running threads'
     lines = []
     for threadId, stack in sys._current_frames().items():
-        lines.append("\n# ThreadID: %s" % threadId)
-        for filename, lineno, name, line in traceback.extract_stack(stack):
-            lines.append('File: "%s", line %d, in %s' % (filename, lineno, name))
-            if line:
-                lines.append("  %s" % (line.strip()))
+      if threadId == threading.current_thread().ident:
+        continue
+      lines.append("# ThreadID: %s" % threadId)
+      printed = False
+      for filename, lineno, name, line in traceback.extract_stack(stack):
+        if filename.startswith('/usr/') and not printed:
+          continue
+        printed = True
+        lines.append('File: "%s", line %d, in %s' % (filename, lineno, name))
+        if line:
+          lines.append("  %s" % (line.strip()))
+      lines.append('')
   else:
     stats = os.stat('/var/log/syslog')
     cmd = 'grep "photoframe\[" /var/log/syslog | tail -n 100'
@@ -196,17 +203,24 @@ def show_logs(all, stack):
     if lines:
       lines = lines.splitlines()
 
+  version = cfg_details('version').get_json()
+
   message = '''
-  <html><head><title>Internal debugging</title></head><body style="font-family: Verdana"><h1>%s</h1>
+  <html><head><title>Internal debugging</title></head><body style="font-family: Verdana"><h1 style="margin-bottom: 1pt">%s</h1>
+  available views: <a href="/debug">debug</a> <a href="/debug/all">debug all</a> <a href="/debug/stacktrace">stacktrace</a>
+
   <pre style="margin: 15pt; padding: 10pt; border: 1px solid; background-color: #eeeeee">''' % title
+  message += 'Version: %s @ %s\n\n' % (version['branch'], version['commit'])
+
   if lines:
     for line in lines:
       message += line + '\n'
   else:
-    message += 'Logs unavailable, perhaps it was archived recently (size will be less than 5000 bytes)'
+    message += 'Logs unavailable, perhaps it was archived recently' # (size will be less than 5000 bytes)'
+
   message += '''</pre>'''
-  if stats:
-    message += '(size of logfile %d bytes, created %s)' % (stats.st_size, datetime.datetime.fromtimestamp(stats.st_ctime).strftime('%c'))
+  #if stats:
+  #  message += 'size of logfile %d bytes, created %s' % (stats.st_size, datetime.datetime.fromtimestamp(stats.st_ctime).strftime('%c'))
   message += '</body></html>'
   return message, 200
 

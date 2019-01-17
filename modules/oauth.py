@@ -96,7 +96,10 @@ class OAuth:
 			if result is None:
 				return {'status':500, 'content':'Unable to download URL using OAuth'}
 			else:
-				return {'status':result.status_code, 'content':result.content}
+				if 'application/json' in result.headers['Content-Type']:
+					return {'status':result.status_code, 'content':result.content, 'json' : result.json()}
+				else:
+					return {'status':result.status_code, 'content':result.content}
 
 	def getRedirectId(self):
 		r = requests.get('%s/?register' % self.ridURI)

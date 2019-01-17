@@ -54,9 +54,11 @@ class GooglePhotos(BaseService):
       for key in keywords:
         if key.lower() == 'latest':
           continue
-        albumId = self.translateKeywordToId(key)
-        if albumId is None:
+        result = self.translateKeywordToId(key)
+        if 'albumId' in result and result['albumId'] is None:
           logging.error('Existing keyword cannot be resolved')
+        elif result['error'] is not None:
+          logging.error('Existing keyword cannot be resolved: %s' % result['error'])
         else:
           extras[key] = albumId
       self.setExtras(extras)
@@ -124,11 +126,11 @@ class GooglePhotos(BaseService):
     # No error in input, resolve album now and provide it as extra data
     albumId = None
     if keywords != 'latest':
-      albumId = self.translateKeywordToId(keywords)
-      if albumId is None:
-        return {'error':'No such album "%s"' % keywords, 'keywords' : keywords}
+      result = self.translateKeywordToId(keywords)
+      if result['error'] is not None:
+        return {'error': result['error'], 'keywords' : keywords}
 
-    return {'error':None, 'keywords':keywords, 'extras' : albumId}
+    return {'error':None, 'keywords':keywords, 'extras' : result}
 
   def addKeywords(self, keywords):
     result = BaseService.addKeywords(self, keywords)
@@ -167,16 +169,22 @@ class GooglePhotos(BaseService):
     for i in range(0, total):
       index = (i + offset) % total
       keyword = keywordList[index]
-      images = self.getImagesFor(keyword)
-      if images is None:
+      result = self.getImagesFor(keyword)
+      if result['error'] is not None:
+        return {'mimetype' : None, 'error' : result['error'], 'source': None}
+      elif result['result'] is None:
         continue
 
-      mimeType, imageUrl, sourceUrl = self.getUrlFromImages(supportedMimeTypes, displaySize, images)
+      mimeType, imageUrl, sourceUrl = self.getUrlFromImages(supportedMimeTypes, displaySize, result['result'])
       if imageUrl is None:
         continue
       result = self.requestUrl(imageUrl, destination=destinationFile)
       if result['status'] == 200:
         return {'mimetype' : mimeType, 'error' : None, 'source': sourceUrl}
+      else:
+        # Refetch since we need the error
+        result = self.requestUrl(imageUrl)
+        return {'mimetype' : None, 'error' : self.translateGoogleError(result), 'source': None}
 
     # Don't assume spelling by default, make sure API is enabled first!
     if not self.isGooglePhotosEnabled():
@@ -256,10 +264,10 @@ class GooglePhotos(BaseService):
 
     if keyword == '':
       logging.error('Cannot use blank album name')
-      return None
+      return {'error' : 'Cannot use blank album name'}
 
     if keyword == 'latest':
-      return None
+      return {'error' : None, 'albumId': None, 'sourceUrl' : None, 'albumName' : None}
 
     logging.debug('Query Google Photos for album named "%s"', keyword)
     url = 'https://photoslibrary.googleapis.com/v1/albums'
@@ -267,7 +275,7 @@ class GooglePhotos(BaseService):
     while True:
       data = self.requestUrl(url, params=params)
       if data['status'] != 200:
-        return None
+        return {'error' : self.translateGoogleError(data)}
       data = json.loads(data['content'])
       for i in range(len(data['albums'])):
         if 'title' in data['albums'][i]:
@@ -286,11 +294,11 @@ class GooglePhotos(BaseService):
 
     if albumid is None:
       url = 'https://photoslibrary.googleapis.com/v1/sharedAlbums'
-      params = {'pageSize':50}#50 is api max
+      params = {'pageSize':50} #50 is api max
       while True:
         data = self.requestUrl(url, params=params)
         if data['status'] != 200:
-          return None
+          return {'error' : self.translateGoogleError(data)}
         data = json.loads(data['content'])
         for i in range(len(data['sharedAlbums'])):
           if 'title' in data['sharedAlbums'][i]:
@@ -307,8 +315,8 @@ class GooglePhotos(BaseService):
         break
 
     if albumid is None:
-      return None
-    return {'albumId': albumid, 'sourceUrl' : source, 'albumName' : albumname}
+      return {'error' : 'Unable to find album on Google Photos'}
+    return {'error' : None, 'albumId': albumid, 'sourceUrl' : source, 'albumName' : albumname}
 
   def getImagesFor(self, keyword):
     images = None
@@ -319,7 +327,7 @@ class GooglePhotos(BaseService):
       params = self.getQueryForKeyword(keyword)
       if params is None:
         logging.error('Unable to create query the keyword "%s"', keyword)
-        return None
+        return {'error' : 'Unable to query Google for "%s"' % keyword, 'result' : None}
 
       url = 'https://photoslibrary.googleapis.com/v1/mediaItems:search'
       maxItems = 1000 # Should be configurable
@@ -327,9 +335,7 @@ class GooglePhotos(BaseService):
       while len(result) < maxItems:
         data = self.requestUrl(url, data=params, usePost=True)
         if data['status'] != 200:
-          logging.warning('Requesting photo failed with status code %d', data['status'])
-          logging.warning('More details: ' + repr(data['content']))
-          break
+          return {'error' : self.translateGoogleError(data), 'result' : None}
         else:
           data = json.loads(data['content'])
           logging.debug('Got %d entries, adding it to existing %d entries', len(data['mediaItems']), len(result))
@@ -344,9 +350,19 @@ class GooglePhotos(BaseService):
           json.dump(result, f)
       else:
         logging.error('No result returned for keyword "%s"!', keyword)
+        return {'error' : 'No result returned for keyword "%s"' % keyword, 'result' : None}
 
     # Now try loading
     if os.path.exists(filename):
       with open(filename, 'r') as f:
         images = json.load(f)
-    return images
+    return {'error' : None, 'result' : images}
+
+  def translateGoogleError(self, data):
+    logging.warning('Google Server Error: ' + repr(data))
+    if 'json' in data and 'error' in data['json'] and 'message' in data['json']['error']:
+      return data['json']['error']['message']
+    elif 'json' in data and 'error' in data['json'] and 'status' in data['json']['error']:
+      return 'Google request failed: %s' % data['json']['error']['status']
+    else:
+      return 'Google request failed with error code %d' % data['status']
